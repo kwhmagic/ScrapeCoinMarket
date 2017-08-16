@@ -1,12 +1,46 @@
 import os
+
+from time import mktime
+from datetime import datetime, timedelta
+import pytz
+from tzlocal import get_localzone
+
 from sqlalchemy import create_engine, Column, DateTime, Float, Integer, String
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 from dataset import connect
-from time import mktime
-from datetime import datetime, timedelta
+
 from poloniex import Poloniex
-from pandas import DataFrame
+
+class RelativeTime( object ):
+
+    _platform_timezone = pytz.utc
+    _local_timezone    = get_localzone()
+
+    def __init__(self, pytzone=None):
+
+        if pytzone:
+            _platform_timezone = pytzone
+
+    def ConverDateStrToTimeStamp(self, dates_str, local):
+
+        unix_timestamps = []
+
+        if local:
+            for date_str in dates_str:
+                date_datetime = datetime.strptime( date_str, "%Y-%m-%d %H:%M:%S")
+                unix_timestamps.append(mktime(date_datetime.timetuple()))
+        else:
+            for date_str in dates_str:
+                date_datetime = datetime.strptime( date_str, "%Y-%m-%d %H:%M:%S")
+                date_datetime = date_datetime.replace(tzinfo=self._platform_timezone).astimezone(self._local_timezone)
+                unix_timestamps.append(mktime(date_datetime.timetuple()))
+
+        return unix_timestamps
+
+    #def PlatformTime(self):
+    #    return datetime.now() - timedelta(hours=self._platform_timezone)
+
 
 class MktDBInfo( object ):
 
@@ -40,7 +74,7 @@ class MktDBInfo( object ):
 
 Base = declarative_base()
 
-class PoloMktDB( MktDBInfo ):
+class PoloMktDB( MktDBInfo, RelativeTime ):
 
     def __init__(self, sqlcore, rootpath):
 
@@ -50,6 +84,7 @@ class PoloMktDB( MktDBInfo ):
             os.makedirs(rootpath)
 
         MktDBInfo.__init__(self, "Poloniex", Poloniex(), sqlcore, rootpath)
+        RelativeTime.__init__(self)
         self.__CreateMetaDataDB__()
         self.__ConnectWithDataSet__()
 
@@ -88,17 +123,6 @@ class PoloMktDB( MktDBInfo ):
         else:
             print(self._platform.returnTicker().keys())
 
-    def ScrapeHistoryData(self, pairs='All', date_end=None, date_begin=None, clean=False):
-
-        if type(pairs) != type([]):
-            pairs = [pairs]
-
-        for pair in pairs:
-            self.rawdata = self._platform.marketTradeHist(pair, date_begin, date_end)
-
-        if clean:
-            self.CleanRawData()
-
     def CleanRawData(self):
 
         # Pop globalTradeID and Total and rename 'type'
@@ -106,7 +130,6 @@ class PoloMktDB( MktDBInfo ):
             [row.pop(delkeys, None) for delkeys in ['globalTradeID', 'total']]
             b_or_s = row.pop('type')[0]
             row['buy_sell'] = 1 if b_or_s == 'b' else -1
-
         # Convert type
         for row in self.rawdata:
             for key, value in row.items():
@@ -115,11 +138,29 @@ class PoloMktDB( MktDBInfo ):
                 elif key[0] in 'ar':
                     row[key] = float(value)
 
+    def ScrapeHistoryData(self, pairs='All', datestr_end=None, datestr_begin=None, clean=False, local=True):
+
+        if type(pairs) != type([]):
+            pairs = [pairs]
+
+        for pair in pairs:
+
+            date_end, date_begin = self.ConverDateStrToTimeStamp([datestr_end, datestr_begin], local)
+            self.rawdata = self._platform.marketTradeHist(pair, date_begin, date_end)
+            for i in range(len(self.rawdata)):
+                print(self.rawdata[i])
+            exit()
+
+        if clean:
+            self.CleanRawData()
+
+        print(self.rawdata[0]['date'])
+
 if __name__ == "__main__":
 
     polodb = PoloMktDB('sqlite', 'C:\\Users\\user\\GitRepo\\ScrapeCoinMarket\\DB\\')
-    polodb.ShowSupportPairs()
-    polodb.ScrapeHistoryData('BTC_ETH', clean=True)
+    # So for we just support filling local time
+    polodb.ScrapeHistoryData('BTC_ETH', "2017-08-16 06:52:00", "2017-08-16 06:50:00", clean=True, local=False)
 
     #testdata =[
     #{'globalTradeID': 210069439, 'tradeID': 1535855, 'date': '2017-08-16 02:54:49', 'type': 'buy', 'rate': '0.00000034', 'amount': '3600.67647059', 'total': '0.00122423'},
