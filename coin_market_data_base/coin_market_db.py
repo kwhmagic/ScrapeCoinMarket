@@ -38,9 +38,7 @@ class RelativeTime( object ):
 
         return unix_timestamps
 
-    #def PlatformTime(self):
-    #    return datetime.now() - timedelta(hours=self._platform_timezone)
-
+Base = declarative_base()
 
 class MktDBInfo( object ):
 
@@ -53,6 +51,10 @@ class MktDBInfo( object ):
         self._dbpath        = sqlcore + ':///' + rootpath + 'poloniex.db'
         self._engine        = create_engine(self._dbpath, echo=False)
         self._platform      = platformobj
+        Base.metadata.create_all(self._engine)
+        self._db            = connect(self._dbpath)
+        Session = sessionmaker(bind=self._engine)
+        self._session = Session()
 
     def SetPlatform(self, platformobj):
         self._platform = platformobj
@@ -72,27 +74,19 @@ class MktDBInfo( object ):
     def SetSupportPairs(self, supportpairs):
         self._supportpairs = supportpairs[:]
 
-Base = declarative_base()
+    def __Add__(self, mktobj):
+        self._session.add(mktobj)
+
+    def __New__(self):
+        self._session.new
+
+    def __Commit__(self):
+        self._session.commit
+
+    def __Count__(self, mktobj):
+        return self._session.query(mktobj).count()
 
 class PoloMktDB( MktDBInfo, RelativeTime ):
-
-    def __init__(self, sqlcore, rootpath):
-
-        self.rawdata = []
-
-        if not os.path.isdir(rootpath):
-            os.makedirs(rootpath)
-
-        MktDBInfo.__init__(self, "Poloniex", Poloniex(), sqlcore, rootpath)
-        RelativeTime.__init__(self)
-        self.__CreateMetaDataDB__()
-        self.__ConnectWithDataSet__()
-
-    def __CreateMetaDataDB__(self):
-        Base.metadata.create_all(self._engine)
-
-    def __ConnectWithDataSet__(self):
-        self._db            = connect(self._dbpath)
 
     class PoloMktFormat( Base ):
 
@@ -105,8 +99,18 @@ class PoloMktDB( MktDBInfo, RelativeTime ):
         buy_sell  = Column(Integer)
 
         def __repr__(self):
-            return ("<PoloHistoryTrade>(tradeID='%s', category='%s', national='%s', gender:'%s', year:'%d')" \
-            %(self.tradeID, self.amount, self.rate, self.date_time, self.buy_sell))
+            return ("<PoloHistoryTrade>(tradeID='%d', amount='%.8f', rate='%.10f', date:'%s', buyOrSell:'%d')" \
+            %(self.tradeID, self.amount, self.rate, self.date, self.buy_sell))
+
+    def __init__(self, sqlcore, rootpath):
+
+        self.rawdata = []
+
+        if not os.path.isdir(rootpath):
+            os.makedirs(rootpath)
+
+        MktDBInfo.__init__(self, "Poloniex", Poloniex(), sqlcore, rootpath)
+        RelativeTime.__init__(self)
 
     # Saving to database or not.
     def SupportPairs(self, Saving=True):
@@ -147,25 +151,42 @@ class PoloMktDB( MktDBInfo, RelativeTime ):
 
             date_end, date_begin = self.ConverDateStrToTimeStamp([datestr_end, datestr_begin], local)
             self.rawdata = self._platform.marketTradeHist(pair, date_begin, date_end)
-            for i in range(len(self.rawdata)):
-                print(self.rawdata[i])
-            exit()
 
         if clean:
             self.CleanRawData()
 
-        print(self.rawdata[0]['date'])
+    def Add(self, item=None):
+        self.__Add__(self.PoloMktFormat(**item))
+
+    def New(self):
+        self.__New__()
+
+    def All(self):
+        return list(self._session.query(self.PoloMktFormat).all())
+
+    def Count(self):
+        return self.__Count__(self.PoloMktFormat)
+
+    def Commit(self):
+        self.__Commit__()
+
 
 if __name__ == "__main__":
 
     polodb = PoloMktDB('sqlite', 'C:\\Users\\user\\GitRepo\\ScrapeCoinMarket\\DB\\')
     # So for we just support filling local time
-    polodb.ScrapeHistoryData('BTC_ETH', "2017-08-16 06:52:00", "2017-08-16 06:50:00", clean=True, local=False)
+    #polodb.ScrapeHistoryData('BTC_ETH', "2017-08-16 06:52:00", "2017-08-16 06:50:00", clean=True, local=False)
+
+    polodb.Add(testdata[0])
+    polodb.Add(testdata[1])
+    polodb.New()
+    print(polodb.Count())
+    print(polodb.All())
 
     #testdata =[
-    #{'globalTradeID': 210069439, 'tradeID': 1535855, 'date': '2017-08-16 02:54:49', 'type': 'buy', 'rate': '0.00000034', 'amount': '3600.67647059', 'total': '0.00122423'},
-    #{'globalTradeID': 210069440, 'tradeID': 1535856, 'date': '2017-08-16 02:54:49', 'type': 'buy', 'rate': '0.00000034', 'amount': '3600.67647059', 'total': '0.00122423'},
-    #{'globalTradeID': 210069441, 'tradeID': 1535857, 'date': '2017-08-16 02:54:49', 'type': 'sell', 'rate': '0.00000034', 'amount': '3600.67647059', 'total': '0.00122423'},
-    #{'globalTradeID': 210069442, 'tradeID': 1535858, 'date': '2017-08-16 02:54:49', 'type': 'sell', 'rate': '0.00000034', 'amount': '3600.67647059', 'total': '0.00122423'},
-    #{'globalTradeID': 210069443, 'tradeID': 1535859, 'date': '2017-08-16 02:54:49', 'type': 'buy', 'rate': '0.00000034', 'amount': '3600.67647059', 'total': '0.00122423'},
+    #{'tradeID': 1535855, 'date': datetime(2017,8,16,2,54,49), 'buy_sell': 1 , 'rate': 0.00000034, 'amount': 3600.67647059},
+    #{'tradeID': 1535856, 'date': datetime(2017,8,16,2,54,49), 'buy_sell': 1 , 'rate': 0.00000034, 'amount': 3600.67647059},
+    #{'tradeID': 1535857, 'date': datetime(2017,8,16,2,54,49), 'buy_sell': -1, 'rate': 0.00000034, 'amount': 3600.67647059},
+    #{'tradeID': 1535858, 'date': datetime(2017,8,16,2,54,49), 'buy_sell': -1, 'rate': 0.00000034, 'amount': 3600.67647059},
+    #{'tradeID': 1535859, 'date': datetime(2017,8,16,2,54,49), 'buy_sell': 1 , 'rate': 0.00000034, 'amount': 3600.67647059},
     #]
