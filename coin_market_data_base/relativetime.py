@@ -13,18 +13,33 @@ class RelativeTime( object ):
         if pytzone:
             _platform_timezone = pytzone
 
-    def ConverDateStrToTimeStamp(self, dates_str, local):
+    def ConvertDateToTimeStamp(self, dates, local):
+
+        isStr, only_one_date = False, False
+
+        if (type(dates) != type([])):
+            only_one_date = True
+            if (type(dates) == type(" ")):
+                isStr = True
+        else:
+            if (type(dates[0]) == type(" ")):
+                isStr = True
+
+        dates = [dates] if only_one_date else dates
 
         unix_timestamps = []
 
         if local:
-            for date_str in dates_str:
-                date_datetime = datetime.strptime( date_str, "%Y-%m-%d %H:%M:%S")
+            for date in dates:
+                date_datetime = datetime.strptime( date, "%Y-%m-%d %H:%M:%S") if isStr else date
                 unix_timestamps.append(mktime(date_datetime.timetuple()))
         else:
-            for date_str in dates_str:
-                date_datetime = datetime.strptime( date_str, "%Y-%m-%d %H:%M:%S")
+            for date in dates:
+                date_datetime = datetime.strptime( date, "%Y-%m-%d %H:%M:%S") if isStr else date
                 date_datetime = date_datetime.replace(tzinfo=self._platform_timezone).astimezone(self._local_timezone)
                 unix_timestamps.append(mktime(date_datetime.timetuple()))
 
-        return unix_timestamps
+        if only_one_date:
+            return unix_timestamps[0]
+        else:
+            return unix_timestamps

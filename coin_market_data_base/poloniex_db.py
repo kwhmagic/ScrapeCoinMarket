@@ -1,5 +1,8 @@
 import os
+import pprint
 from datetime import datetime, date, time
+
+from multiprocessing import Process, Queue
 
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy import create_engine, Column, Date, Time, Float, Integer, String
@@ -63,14 +66,99 @@ class PoloMktDB( MktDBInfo, RelativeTime ):
 
         return self.cleandata
 
-    def ScrapeHistoryData(self, pairs='All', datestr_end=None, datestr_begin=None, local=True, write2db=False, rmrawdate=True):
 
-        if type(pairs) != type([]):
-            pairs = [pairs]
+    def __AutoScrape_Driver__(self, queue, threadidx, pairs, begin_timestamp, end_timestamp):
+
+        histdata_per_thread = []
 
         for pair in pairs:
 
-            date_end, date_begin = self.ConverDateStrToTimeStamp([datestr_end, datestr_begin], local)
+            segbegin_timestamp, segend_timestamp = begin_timestamp, end_timestamp
+
+            while True:
+
+                segrange = segend_timestamp - segbegin_timestamp
+                histdata_seg = self._platform.marketTradeHist(pair, segbegin_timestamp, segend_timestamp)
+
+                if len(histdata_seg) >= 50000:
+                    segrange /= 2
+                    segend_timestamp = segbegin_timestamp + segrange
+                else:
+                    for row in histdata_seg:
+                        row['pair'] = pair
+                    histdata_per_thread += histdata_seg
+
+                    if int(segend_timestamp) >= int(end_timestamp):
+                        break
+
+                    segbegin_timestamp, segend_timestamp = segend_timestamp, end_timestamp
+
+        return (histdata_per_thread)
+        #queue.put(threadidx, histdata_per_thread)
+
+
+    def AutoScrape(self, pairs='all', begin_datetime=None, local=True, shutdown_datetime=None, period=240, threadsnum=4):
+
+        def __chunks__(l, n):
+            """Yield successive n-sized chunks from l."""
+            for i in range(0, len(l), n):
+                yield l[i:i + n]
+
+        if pairs == 'all':
+            pairs = list(self.SupportPairs())
+        else:
+            pairs = [pairs] if type(pairs) != type([]) else pairs
+
+        pairs_per_thread = list(__chunks__(pairs, len(pairs)//threadsnum+1))
+
+        segbegin_timestamp = self.ConvertDateToTimeStamp(begin_datetime, local)
+
+        shutdown_timestamp = None
+
+        if shutdown_datetime != None:
+            shutdown_timestamp  = self.ConvertDateToTimeStamp(shutdown_datetime, True)
+
+        while True:
+
+            now_timestamp = self.ConvertDateToTimeStamp(datetime.now(), True)
+            if shutdown_timestamp != None and now_timestamp > shutdown_timestamp :
+                break
+
+            segend_timestamp = segbegin_timestamp + period * 60
+            segend_timestamp = segend_timestamp if segend_timestamp <= now_timestamp else now_timestamp
+
+            jobs = []
+            queue = Queue()
+
+            print(self.__AutoScrape_Driver__(queue, 0, pairs_per_thread[0], segbegin_timestamp, segend_timestamp))
+
+
+#
+            #for i in range(threadsnum):
+            #    print(i)
+            #    process = Process(target=self.__AutoScrape_Driver__, args=(queue, i, pairs_per_thread[i], segbegin_timestamp, segend_timestamp))
+            #    jobs.append(process)
+#
+#
+            #for j in jobs:
+            #    j.start()
+#
+            #for j in josb:
+            #    j.join()
+#
+            #exit()
+            #print(queue.get())
+
+    def ScrapeHistoryData(self, pairs='all', date_end=None, date_begin=None, local=True, write2db=False, rmrawdate=True):
+
+        if pairs == 'all':
+            pairs = list(self.SupportPairs())
+        else:
+            pairs = [pairs] if type(pairs) != type([]) else pairs
+
+        for pair in pairs:
+
+            date_end, date_begin = self.ConvertDateToTimeStamp([date_end, date_begin], local)
             self.subdata = self._platform.marketTradeHist(pair, date_begin, date_end).copy()
             for row in self.subdata:
                 row['pair'] = pair
