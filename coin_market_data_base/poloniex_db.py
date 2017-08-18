@@ -1,6 +1,9 @@
 import os
+import sys
+sys.stdout.flush()
 import pprint
 from datetime import datetime, date, time
+from time import sleep
 
 from multiprocessing import Process, Queue
 
@@ -32,6 +35,10 @@ class PoloMktDB( MktDBInfo, RelativeTime ):
             return ("<PoloHistoryTrade>(pair:'%s', tradeID:'%d', amount:'%.8f', rate:'%.10f', date:'%s', time:'%s', buyOrSell:'%d')\n" \
             %(self.pair, self.tradeID, self.amount, self.rate, self.date, self.time, self.buy_sell))
 
+    """
+    def __init__(self, *args, **kwargs):
+        pass
+    """
     def __init__(self, sqlcore, rootpath):
 
         self.cleandata, self.rawdata = [], []
@@ -41,6 +48,9 @@ class PoloMktDB( MktDBInfo, RelativeTime ):
 
         MktDBInfo.__init__(self, "Poloniex", Poloniex(), self.PoloMktFormat, sqlcore, rootpath, Base)
         RelativeTime.__init__(self)
+
+    def __reduce__(self):
+        return (self.__class__, (self._sqlcore, self._rootpath))
 
     def SupportPairs(self, Saving=True):
 
@@ -66,38 +76,36 @@ class PoloMktDB( MktDBInfo, RelativeTime ):
 
         return self.cleandata
 
+    def __AutoScrape_Driver__( self, queue, threadidx, pairs, begin_timestamp, end_timestamp ):
 
-    def __AutoScrape_Driver__(self, queue, threadidx, pairs, begin_timestamp, end_timestamp):
+       histdata_per_thread = []
 
-        histdata_per_thread = []
+       for pair in pairs:
 
-        for pair in pairs:
+           segbegin_timestamp, segend_timestamp = begin_timestamp, end_timestamp
 
-            segbegin_timestamp, segend_timestamp = begin_timestamp, end_timestamp
+           while True:
 
-            while True:
+               segrange = segend_timestamp - segbegin_timestamp
+               histdata_seg = Poloniex().marketTradeHist(pair, segbegin_timestamp, segend_timestamp)
 
-                segrange = segend_timestamp - segbegin_timestamp
-                histdata_seg = self._platform.marketTradeHist(pair, segbegin_timestamp, segend_timestamp)
+               if len(histdata_seg) >= 50000:
+                   segrange /= 2
+                   segend_timestamp = segbegin_timestamp + segrange
+               else:
+                   for row in histdata_seg:
+                       row['pair'] = pair
+                   histdata_per_thread += histdata_seg
 
-                if len(histdata_seg) >= 50000:
-                    segrange /= 2
-                    segend_timestamp = segbegin_timestamp + segrange
-                else:
-                    for row in histdata_seg:
-                        row['pair'] = pair
-                    histdata_per_thread += histdata_seg
+                   if int(segend_timestamp) >= int(end_timestamp):
+                       break
 
-                    if int(segend_timestamp) >= int(end_timestamp):
-                        break
+                   segbegin_timestamp, segend_timestamp = segend_timestamp, end_timestamp
 
-                    segbegin_timestamp, segend_timestamp = segend_timestamp, end_timestamp
-
-        return (histdata_per_thread)
-        #queue.put(threadidx, histdata_per_thread)
+       #queue.put((threadidx, histdata_per_thread))
 
 
-    def AutoScrape(self, pairs='all', begin_datetime=None, local=True, shutdown_datetime=None, period=240, threadsnum=4):
+    def AutoScrape(self, pairs='all', begin_datetime=None, local=True, shutdown_datetime=None, period=3, threadsnum=4):
 
         def __chunks__(l, n):
             """Yield successive n-sized chunks from l."""
@@ -109,7 +117,8 @@ class PoloMktDB( MktDBInfo, RelativeTime ):
         else:
             pairs = [pairs] if type(pairs) != type([]) else pairs
 
-        pairs_per_thread = list(__chunks__(pairs, len(pairs)//threadsnum+1))
+        chunksize = len(pairs)//threadsnum+1 if len(pairs) % threadsnum != 0 else len(pairs)//threadsnum
+        pairs_per_thread = list(__chunks__(pairs, chunksize))
 
         segbegin_timestamp = self.ConvertDateToTimeStamp(begin_datetime, local)
 
@@ -118,36 +127,39 @@ class PoloMktDB( MktDBInfo, RelativeTime ):
         if shutdown_datetime != None:
             shutdown_timestamp  = self.ConvertDateToTimeStamp(shutdown_datetime, True)
 
-        while True:
+        cnt = 0
+        while cnt < 1:
 
+            cnt += 1
             now_timestamp = self.ConvertDateToTimeStamp(datetime.now(), True)
+
             if shutdown_timestamp != None and now_timestamp > shutdown_timestamp :
                 break
 
             segend_timestamp = segbegin_timestamp + period * 60
             segend_timestamp = segend_timestamp if segend_timestamp <= now_timestamp else now_timestamp
 
-            jobs = []
+            #jobs = []
             queue = Queue()
+            #self.__AutoScrape_Driver__( queue, 0, pairs_per_thread[0], segbegin_timestamp, segend_timestamp)
 
-            print(self.__AutoScrape_Driver__(queue, 0, pairs_per_thread[0], segbegin_timestamp, segend_timestamp))
+            #for i in range(0, threadsnum):
+            process = Process(target=self.__AutoScrape_Driver__, args=( queue, 0, pairs_per_thread[0], segbegin_timestamp, segend_timestamp))
 
+            process.start()
+            process.join()
+            #    jobs.append(process)
 
-#
+            #[x.start() for x in jobs]
+            #[x.join() for x in jobs]
+
+            print("3-----------------")
+            #rawdata = []
             #for i in range(threadsnum):
             #    print(i)
-            #    process = Process(target=self.__AutoScrape_Driver__, args=(queue, i, pairs_per_thread[i], segbegin_timestamp, segend_timestamp))
-            #    jobs.append(process)
-#
-#
-            #for j in jobs:
-            #    j.start()
-#
-            #for j in josb:
-            #    j.join()
-#
-            #exit()
-            #print(queue.get())
+            #    rawdata += queue.get_nowait()
+            #print(len(rawdata))
+            print("4-----------------")
 
     def ScrapeHistoryData(self, pairs='all', date_end=None, date_begin=None, local=True, write2db=False, rmrawdate=True):
 
