@@ -1,63 +1,91 @@
-from sqlalchemy import create_engine, Column, DateTime, Float, Integer, String
+import platform
+import os
+osversion = platform.system()
+from sqlalchemy import create_engine, Column, Date, Time, Float, Integer, String
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 from dataset import connect
 
 
-class MktDBInfo( object ):
+def GetClassMap(platformname, pair):
 
-    _supportpairs  = []
+    Base      = declarative_base()
 
-    def __init__(self, platformname, platformobj, mktformatobj, sqlcore, rootpath, base):
+    class PairInfoFormat( Base ):
+
+        __tablename__ = platformname + "["+pair+"]"
+        id = Column(Integer, primary_key=True)
+        tradeID       = Column(Integer)
+        amount        = Column(Float(1E-8))
+        rate          = Column(Float(1E-10))
+        date          = Column(Date)
+        time          = Column(Time)
+        buy_sell      = Column(Integer)
+
+        def __repr__(self):
+            return ("<%s>(tradeID:'%d', amount:'%.8f', rate:'%.10f', date:'%s', time:'%s', buyOrSell:'%d')\n" \
+            %(self.__tablename__, self.tradeID, self.amount, self.rate, self.date, self.time, self.buy_sell))
+
+    return Base, PairInfoFormat
+
+
+class PairDBInfo( object ):
+
+    def __init__(self, platformname, sqlcore, rootpath, pair):
+
+        split = '\\' if osversion == 'Windows' else '/'
+        db_root_path = rootpath + platformname + split
+
+        if not os.path.isdir(db_root_path):
+            os.makedirs(db_root_path)
+
+        self._base, self._classmap  = GetClassMap(platformname, pair)
+        self._platformname  = platformname
         self._sqlcore       = sqlcore
         self._rootpath      = rootpath
-        self._platformname  = platformname
-        self._mktformatobj  = mktformatobj
-        self._dbpath        = sqlcore + ':///' + rootpath + 'poloniex.db'
+        self._dbpath        = sqlcore + ':///' + db_root_path + pair + '.db'
         self._engine        = create_engine(self._dbpath, echo=False)
-        self._platform      = platformobj
-        self._base          = base
         self._base.metadata.create_all(self._engine)
         self._db            = connect(self._dbpath)
         Session = sessionmaker(bind=self._engine)
         self._session = Session()
-        self._query   = self._session.query(self._mktformatobj)
+        self._query   = self._session.query(self._classmap)
 
-    def SetPlatform(self, platformobj):
-        self._platform = platformobj
+class MktDBInfo( object ):
 
-    def SqlEngine(self):
-        return self._engine
+    def __init__(self, platformname, platformobj, sqlcore, rootpath, pairs=None):
 
-    def SetSqlCore(self, sqlcore):
-        self._sqlcore  = sqlcore
+        self._platformobj = platformobj
+        self._supportpairs = list(self._platformobj.returnTicker().keys()) if pairs==None else pairs
+        self._pairsDB = dict()
 
-    def SetPlatformName(slef, platformname):
-        self._platformname = platformname
+        for pair in self._supportpairs:
+            self._pairsDB[pair] = PairDBInfo(platformname, sqlcore, rootpath, pair)
 
-    def SetRootPath(self, rootpath):
-        self._rootpath = rootpath
+    def __Add__(self, pair, mktobj):
+        db = self._pairsDB.get(pair)
+        db._session.add(mktobj)
 
-    def SetSupportPairs(self, supportpairs):
-        self._supportpairs = supportpairs[:]
+    def __Add__All__(self, pair, mktobjs):
+        db = self._pairsDB.get(pair)
+        db._session.add_all(mktobjs)
 
-    def __Add__(self, mktobj):
-        self._session.add(mktobj)
+    def __Delete__(self, pair, delobj):
+        db = self._pairsDB.get(pair)
+        db._session.query(db._classmap).filter_by(tradeID=delobj.tradeID).delete()
 
-    def __Add__All__(self, mktobjs):
-        self._session.add_all(mktobjs)
+    def __New__(self, pair):
+        db = self._pairsDB.get(pair)
+        db._session.new
 
-    def __Delete__(self, delobj):
-        self._session.query(self._mktformatobj).filter(mktobj.tradeID==delobj.tradeID).delete()
+    def __Commit__(self, pair):
+        db = self._pairsDB.get(pair)
+        db._session.commit()
 
-    def __New__(self):
-        self._session.new
+    def __All__(self, pair):
+        db = self._pairsDB.get(pair)
+        return db._session.query(db._classmap).all()
 
-    def __Commit__(self):
-        self._session.commit()
-
-    def __Count__(self):
-        return self._session.query(self._mktformatobj).count()
-
-    def __All__(self):
-        return self._session.query(self._mktformatobj).all()
+    def __Count__(self, pair):
+        db = self._pairsDB.get(pair)
+        return db._session.query(db._classmap).count()

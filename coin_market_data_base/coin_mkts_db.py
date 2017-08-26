@@ -1,20 +1,23 @@
 from datetime import datetime, date, time
 from poloniex_db import PoloMktDB
 from dataset import connect
-#import parallelTestModule
+
+from multiprocessing import cpu_count
+
+#from poloniex import Poloniex
 
 
 if __name__ == "__main__":
 
-    #extractor = parallelTestModule.ParallelExtractor()
-    #extractor.runInParallel(numProcesses=2, numThreads=4)
+    polodb = PoloMktDB('sqlite', 'C:\\Users\\user\\GitRepo\\ScrapeCoinMarket\\DB\\', ['BTC_ETH', 'USDT_ETH', 'USDT_BTC'])
+    #polodb.AutoScrape(pairs=['BTC_ETH', 'USDT_ETH'], begin_datetime='2017-08-15 08:22:00', process_num=2)
+    t = [{"tradeID": 1, "amount": 12, "rate": 0.1, "date": date(2017, 8, 22), "time": time(8, 22, 0), "buy_sell": 1},
+    {"tradeID": 2, "amount": 13, "rate": 0.2, "date": date(2017, 8, 22), "time": time(8, 22, 0), "buy_sell": 1},
+    {"tradeID": 3, "amount": 14, "rate": 0.3, "date": date(2017, 8, 22), "time": time(8, 22, 0), "buy_sell": 1}
+    ]
 
-    polodb = PoloMktDB('sqlite', 'C:\\Users\\user\\GitRepo\\ScrapeCoinMarket\\DB\\')
-    polodb.AutoScrape(pairs=['BTC_ETH', 'USDT_REP', 'USDT_DASH', 'USDT_ETC'], begin_datetime='2017-08-15 08:22:00', threadsnum=1)
-    #polodb.ScrapeHistoryData(['BTC_ETH', 'BTC_LTC', 'BTC_LSK', 'USDT_ETH'],\
-    # "2017-08-16 08:22:00",  "2017-08-14 08:22:00", local=False, write2db=True)
-    #dataOn20170816 = polodb.QueryDate(['BTC_LSK'], date(2017, 8, 15), date(2017, 8, 16))
-    #print(dataOn20170816)
-    #print(len(dataOn20170816))
-    #dataETHOn20170816 = list(polodb.QueryDate(['BTC_ETH'], date(2017, 8, 16)))
-    #print(len(dataETHOn20170816))
+    polodb.Add_All('BTC_ETH', t, reverse=True)
+    polodb.Commit('BTC_ETH')
+    print(polodb.Count('BTC_ETH'))
+    print(polodb.Count('USDT_ETH'))
+    print(polodb.All('BTC_ETH'))

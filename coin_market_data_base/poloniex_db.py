@@ -2,122 +2,89 @@ import os
 import sys
 sys.stdout.flush()
 import pprint
-from datetime import datetime, date, time
-from time import sleep
 
-from multiprocessing import Process, Queue
-
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy import create_engine, Column, Date, Time, Float, Integer, String
-from dataset import connect
+from multiprocessing import Process, Queue, Pool
+from functools import partial
 
 from poloniex import Poloniex
 from relativetime import RelativeTime
 from mktdbinfo import MktDBInfo
 
-Base      = declarative_base()
-
 class PoloMktDB( MktDBInfo, RelativeTime ):
 
-    class PoloMktFormat( Base ):
-
-        __tablename__ = "PoloniexHistoryTrade"
-        id = Column(Integer, primary_key=True)
-        pair          = Column(String(50))
-        tradeID       = Column(Integer)
-        amount        = Column(Float(1E-8))
-        rate          = Column(Float(1E-10))
-        date          = Column(Date)
-        time          = Column(Time)
-        buy_sell      = Column(Integer)
-
-        def __repr__(self):
-            return ("<PoloHistoryTrade>(pair:'%s', tradeID:'%d', amount:'%.8f', rate:'%.10f', date:'%s', time:'%s', buyOrSell:'%d')\n" \
-            %(self.pair, self.tradeID, self.amount, self.rate, self.date, self.time, self.buy_sell))
-
-    """
-    def __init__(self, *args, **kwargs):
-        pass
-    """
-    def __init__(self, sqlcore, rootpath):
+    def __init__(self, sqlcore, rootpath, pairs=None):
 
         self.cleandata, self.rawdata = [], []
+        self._supportpairs = list(Poloniex().returnTicker().keys())
+        self._sqlcore, self._rootpath = sqlcore, rootpath
 
-        if not os.path.isdir(rootpath):
-            os.makedirs(rootpath)
-
-        MktDBInfo.__init__(self, "Poloniex", Poloniex(), self.PoloMktFormat, sqlcore, rootpath, Base)
+        MktDBInfo.__init__(self, "Poloniex", Poloniex(), self._sqlcore, self._rootpath, pairs)
         RelativeTime.__init__(self)
 
     def __reduce__(self):
         return (self.__class__, (self._sqlcore, self._rootpath))
 
     def SupportPairs(self, Saving=True):
-
-        if Saving:
-            self._supportpairs = self._platform.returnTicker().keys()
-
-        return  self._platform.returnTicker().keys()
-
-    def ShowSupportPairs(self):
-
-        if len(self._supportpairs) != 0:
-            print(self._supportpairs)
-        else:
-            print(self._platform.returnTicker().keys())
+        return  list(self._supportpairs)
 
     def RawData(self):
         return self.rawdata
 
     def CleanData(self):
-
         if len(self.cleandata) == 0 and len(self.rawdata) != 0:
             self.CleanRawData(delrawdata=False)
-
         return self.cleandata
 
-    def __AutoScrape_Driver__( self, queue, threadidx, pairs, begin_timestamp, end_timestamp ):
+    """
+    def __AutoScrape_Driver__( self, begin_timestamp, end_timestamp, pairs_last_idx, pairs):
 
-       histdata_per_thread = []
+        histdata_per_thread, last_idx = dict(), dict()
 
-       for pair in pairs:
+        for pair in pairs:
 
-           segbegin_timestamp, segend_timestamp = begin_timestamp, end_timestamp
+            segbegin_timestamp, segend_timestamp = begin_timestamp, end_timestamp
+            last_idx[pair] = pairs_last_idx[pair]
+            histdata_per_thread[pair] = []
 
-           while True:
+            while True:
 
-               segrange = segend_timestamp - segbegin_timestamp
-               histdata_seg = Poloniex().marketTradeHist(pair, segbegin_timestamp, segend_timestamp)
+                segrange = segend_timestamp - segbegin_timestamp
+                histdata_seg = Poloniex().marketTradeHist(pair, segbegin_timestamp, segend_timestamp)
 
-               if len(histdata_seg) >= 50000:
-                   segrange /= 2
-                   segend_timestamp = segbegin_timestamp + segrange
-               else:
-                   for row in histdata_seg:
-                       row['pair'] = pair
-                   histdata_per_thread += histdata_seg
+                histdata_per_thread[pair] += histdata_seg
 
-                   if int(segend_timestamp) >= int(end_timestamp):
-                       break
+                if len(histdata_seg) >= 50000:
 
-                   segbegin_timestamp, segend_timestamp = segend_timestamp, end_timestamp
+                    latest_timestamp = self.ConvertDateToTimeStamp(histdata_seg[0]['date'], False)
+                    segend_timestamp = latest_timestamp
 
-       #queue.put((threadidx, histdata_per_thread))
+                if int(segend_timestamp) >= int(end_timestamp):
+                    break
+
+                segbegin_timestamp, segend_timestamp = segend_timestamp, end_timestamp
+
+        return (histdata_per_thread, last_idx)
 
 
-    def AutoScrape(self, pairs='all', begin_datetime=None, local=True, shutdown_datetime=None, period=3, threadsnum=4):
+    def AutoScrape(self, pairs='all', begin_datetime=None, local=False, shutdown_datetime=None, period=240, process_num=4):
 
         def __chunks__(l, n):
-            """Yield successive n-sized chunks from l."""
+            #Yield successive n-sized chunks from l.
             for i in range(0, len(l), n):
                 yield l[i:i + n]
 
         if pairs == 'all':
-            pairs = list(self.SupportPairs())
+            pairs = self.SupportPairs()
         else:
             pairs = [pairs] if type(pairs) != type([]) else pairs
 
-        chunksize = len(pairs)//threadsnum+1 if len(pairs) % threadsnum != 0 else len(pairs)//threadsnum
+        histdata_dict, pairs_last_idx = dict(), dict()
+
+        for pair in pairs:
+            histdata_dict[pair] = []
+            pairs_last_idx[pair] = 0
+
+        chunksize = len(pairs)//process_num+1 if len(pairs) % process_num != 0 else len(pairs)//process_num
         pairs_per_thread = list(__chunks__(pairs, chunksize))
 
         segbegin_timestamp = self.ConvertDateToTimeStamp(begin_datetime, local)
@@ -128,9 +95,8 @@ class PoloMktDB( MktDBInfo, RelativeTime ):
             shutdown_timestamp  = self.ConvertDateToTimeStamp(shutdown_datetime, True)
 
         cnt = 0
-        while cnt < 1:
+        while True:
 
-            cnt += 1
             now_timestamp = self.ConvertDateToTimeStamp(datetime.now(), True)
 
             if shutdown_timestamp != None and now_timestamp > shutdown_timestamp :
@@ -139,32 +105,33 @@ class PoloMktDB( MktDBInfo, RelativeTime ):
             segend_timestamp = segbegin_timestamp + period * 60
             segend_timestamp = segend_timestamp if segend_timestamp <= now_timestamp else now_timestamp
 
-            #jobs = []
-            queue = Queue()
-            #self.__AutoScrape_Driver__( queue, 0, pairs_per_thread[0], segbegin_timestamp, segend_timestamp)
+            pool = Pool(process_num)
+            scrape_func = partial(self.__AutoScrape_Driver__, segbegin_timestamp, segend_timestamp, pairs_last_idx)
+            itptr = pool.imap(scrape_func, pairs_per_thread)
 
-            #for i in range(0, threadsnum):
-            process = Process(target=self.__AutoScrape_Driver__, args=( queue, 0, pairs_per_thread[0], segbegin_timestamp, segend_timestamp))
+            pool.close()
+            pool.join()
 
-            process.start()
-            process.join()
-            #    jobs.append(process)
+            for it in itptr:
+                for pair_data_key, pair_data_value in it[0].items():
+                    histdata_dict[pair_data_key] += pair_data_value
+                    pairs_last_idx[pair_data_key] = it[1][pair_data_key]  # last_idx
 
-            #[x.start() for x in jobs]
-            #[x.join() for x in jobs]
+            for key, value in histdata_dict.items():
+                for row in value:
+                    print(row)
+                print(key)
 
-            print("3-----------------")
-            #rawdata = []
-            #for i in range(threadsnum):
-            #    print(i)
-            #    rawdata += queue.get_nowait()
-            #print(len(rawdata))
-            print("4-----------------")
+            cnt++
+            if cnt != 0:
+                break
+    """
 
+    """
     def ScrapeHistoryData(self, pairs='all', date_end=None, date_begin=None, local=True, write2db=False, rmrawdate=True):
 
         if pairs == 'all':
-            pairs = list(self.SupportPairs())
+            pairs = self.SupportPairs()
         else:
             pairs = [pairs] if type(pairs) != type([]) else pairs
 
@@ -201,34 +168,44 @@ class PoloMktDB( MktDBInfo, RelativeTime ):
 
         if write2db:
 
-            self.Add_All(self.cleandata)
+            self.Add_All(self.cleandata, reverse=True)
             self.New()
             self.Commit()
             self.cleandata = []
+    """
 
-    def Add(self, item):
-        self.__Add__(self.PoloMktFormat(**item))
+    def Add(self, pair, item):
+        self.__Add__( pair, self._pairsDB[pair]._classmap(**item) )
 
-    def Add_All(self, itmes):
+    def Add_All(self, pair, itmes, reverse=False):
 
         mktobjs = []
-        for item in itmes:
-            mktobjs.append(self.PoloMktFormat(**item))
+        db = self._pairsDB.get(pair)
+        if not reverse:
+            for item in itmes:
+                mktobjs.append(db._classmap(**item))
+        else:
+            for item in reversed(itmes):
+                mktobjs.append(db._classmap(**item))
 
-        self.__Add__All__(mktobjs)
+        self.__Add__All__(pair, mktobjs)
 
-    def Delete(self, item):
-        self.__Delete__(self.PoloMktFormat(**item))
+    def Delete(self, pair, item):
+        self.__Delete__(pair, self._pairsDB[pair]._classmap(**item))
 
-    def New(self):
-        self.__New__()
+    def New(self, pair):
+        self.__New__(pair)
 
-    def Commit(self):
-        self.__Commit__()
+    def Commit(self, pair):
+        self.__Commit__(pair)
 
-    def All(self):
-        return list(self.__All__())
+    def All(self, pair):
+        return list(self.__All__(pair))
 
+    def Count(self, pair):
+        return self.__Count__(pair)
+
+    """
     def QueryDate(self, pairs='all', date_begin=None, date_end=None):
 
         data = []
@@ -251,6 +228,4 @@ class PoloMktDB( MktDBInfo, RelativeTime ):
                 data += self._query.filter(self.PoloMktFormat.pair == pair)
 
         return data
-
-    def Count(self):
-        return self.__Count__()
+    """
