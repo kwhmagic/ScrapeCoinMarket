@@ -9,15 +9,14 @@ from multiprocessing import cpu_count
 
 if __name__ == "__main__":
 
-    polodb = PoloMktDB('sqlite', 'C:\\Users\\user\\GitRepo\\ScrapeCoinMarket\\DB\\', ['BTC_ETH', 'USDT_ETH', 'USDT_BTC'])
-    #polodb.AutoScrape(pairs=['BTC_ETH', 'USDT_ETH'], begin_datetime='2017-08-15 08:22:00', process_num=2)
-    t = [{"tradeID": 1, "amount": 12, "rate": 0.1, "date": date(2017, 8, 22), "time": time(8, 22, 0), "buy_sell": 1},
-    {"tradeID": 2, "amount": 13, "rate": 0.2, "date": date(2017, 8, 22), "time": time(8, 22, 0), "buy_sell": 1},
-    {"tradeID": 3, "amount": 14, "rate": 0.3, "date": date(2017, 8, 22), "time": time(8, 22, 0), "buy_sell": 1}
-    ]
+    polodb = PoloMktDB('sqlite', 'C:\\Users\\user\\GitRepo\\ScrapeCoinMarket\\DB\\',pairs='all')
+     #['BTC_ETH', 'USDT_ETH', 'USDT_BTC', 'BTC_LSK', 'USDT_BCH', 'BTC_BCH', 'ETH_BCH', 'BTC_XMR'])
 
-    polodb.Add_All('BTC_ETH', t, reverse=True)
-    polodb.Commit('BTC_ETH')
-    print(polodb.Count('BTC_ETH'))
-    print(polodb.Count('USDT_ETH'))
-    print(polodb.All('BTC_ETH'))
+    #polodb.ScrapeHistoryData('all', datetime(2017, 8, 22, 8, 22, 0), datetime(2017, 8, 22, 8, 23, 00),\
+    # period=480, local=False, write2db=True, process_num=6)
+
+    polodb.AutoScrape(pairs='all', begin_datetime=datetime(2017, 8, 30, 0, 18, 1), local=True, \
+     shutdown_datetime=datetime(2017, 8, 30, 0, 22, 0), period=240, process_num=6)
+
+    print(list(polodb.All('BTC_ETH'))[0])
+    print(list(polodb.All('BTC_ETH'))[-1])

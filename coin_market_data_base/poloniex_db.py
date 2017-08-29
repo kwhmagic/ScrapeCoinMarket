@@ -3,6 +3,7 @@ import sys
 sys.stdout.flush()
 import pprint
 
+from datetime import datetime, date, time
 from multiprocessing import Process, Queue, Pool
 from functools import partial
 
@@ -10,19 +11,27 @@ from poloniex import Poloniex
 from relativetime import RelativeTime
 from mktdbinfo import MktDBInfo
 
+def Chunks(l, n):
+    #Yield successive n-sized chunks from l.
+    for i in range(0, len(l), n):
+        yield l[i:i + n]
+
 class PoloMktDB( MktDBInfo, RelativeTime ):
 
-    def __init__(self, sqlcore, rootpath, pairs=None):
+    def __init__(self, sqlcore, rootpath, pairs='all'):
 
-        self.cleandata, self.rawdata = [], []
-        self._supportpairs = list(Poloniex().returnTicker().keys())
-        self._sqlcore, self._rootpath = sqlcore, rootpath
+        self._cleandata, self._rawdata = dict(), dict()
+        self._sqlcore, self._rootpath, = sqlcore, rootpath
+        self._pairs = list(Poloniex().returnTicker().keys()) if pairs=='all' else pairs
 
-        MktDBInfo.__init__(self, "Poloniex", Poloniex(), self._sqlcore, self._rootpath, pairs)
+        for pair in self._pairs:
+            self._cleandata[pair], self._rawdata[pair] = [], []
+
+        MktDBInfo.__init__(self, "Poloniex", Poloniex(), self._sqlcore, self._rootpath, self._pairs)
         RelativeTime.__init__(self)
 
     def __reduce__(self):
-        return (self.__class__, (self._sqlcore, self._rootpath))
+        return (self.__class__, (self._sqlcore, self._rootpath, self._pairs))
 
     def SupportPairs(self, Saving=True):
         return  list(self._supportpairs)
@@ -35,23 +44,41 @@ class PoloMktDB( MktDBInfo, RelativeTime ):
             self.CleanRawData(delrawdata=False)
         return self.cleandata
 
-    """
-    def __AutoScrape_Driver__( self, begin_timestamp, end_timestamp, pairs_last_idx, pairs):
+    def __ScrapeDriver__( self, begin_timestamp, end_timestamp, pairs_last_idx, clean, pairs):
 
-        histdata_per_thread, last_idx = dict(), dict()
+        histdata_per_thread, clean_per_thread, last_idx = dict(), dict(), dict()
 
         for pair in pairs:
 
             segbegin_timestamp, segend_timestamp = begin_timestamp, end_timestamp
             last_idx[pair] = pairs_last_idx[pair]
             histdata_per_thread[pair] = []
+            clean_per_thread[pair] = []
 
             while True:
 
                 segrange = segend_timestamp - segbegin_timestamp
-                histdata_seg = Poloniex().marketTradeHist(pair, segbegin_timestamp, segend_timestamp)
+                histdata_seg = self._platformobj.marketTradeHist(pair, segbegin_timestamp, segend_timestamp)
 
-                histdata_per_thread[pair] += histdata_seg
+                if clean:
+
+                    cleanrow = dict()
+                    for row in reversed(histdata_seg):
+                        b_or_s = row['type'][0]
+                        cleanrow['buy_sell'] = 1 if b_or_s == 'b' else -1
+                        for key, value in row.items():
+                            if key[0] == 'd':
+                                datestr, timestr = value.split(' ')
+                                cleanrow['date'] = datetime.strptime( datestr, "%Y-%m-%d").date()
+                                cleanrow['time'] = datetime.strptime( timestr, "%H:%M:%S").time()
+                            elif key[0] in 'ar':
+                                cleanrow[key] = float(value)
+                            elif key == 'tradeID':
+                                cleanrow[key] = value
+                        clean_per_thread[pair].append(cleanrow.copy())
+
+                else:
+                    histdata_per_thread[pair] += histdata_seg[::-1]
 
                 if len(histdata_seg) >= 50000:
 
@@ -63,15 +90,13 @@ class PoloMktDB( MktDBInfo, RelativeTime ):
 
                 segbegin_timestamp, segend_timestamp = segend_timestamp, end_timestamp
 
-        return (histdata_per_thread, last_idx)
+        if clean:
+            return (clean_per_thread, last_idx)
+        else:
+            return (histdata_per_thread, last_idx)
 
 
     def AutoScrape(self, pairs='all', begin_datetime=None, local=False, shutdown_datetime=None, period=240, process_num=4):
-
-        def __chunks__(l, n):
-            #Yield successive n-sized chunks from l.
-            for i in range(0, len(l), n):
-                yield l[i:i + n]
 
         if pairs == 'all':
             pairs = self.SupportPairs()
@@ -81,11 +106,11 @@ class PoloMktDB( MktDBInfo, RelativeTime ):
         histdata_dict, pairs_last_idx = dict(), dict()
 
         for pair in pairs:
-            histdata_dict[pair] = []
+            histdata_dict[pair]  = []
             pairs_last_idx[pair] = 0
 
         chunksize = len(pairs)//process_num+1 if len(pairs) % process_num != 0 else len(pairs)//process_num
-        pairs_per_thread = list(__chunks__(pairs, chunksize))
+        pairs_per_thread = list(Chunks(pairs, chunksize))
 
         segbegin_timestamp = self.ConvertDateToTimeStamp(begin_datetime, local)
 
@@ -94,85 +119,71 @@ class PoloMktDB( MktDBInfo, RelativeTime ):
         if shutdown_datetime != None:
             shutdown_timestamp  = self.ConvertDateToTimeStamp(shutdown_datetime, True)
 
-        cnt = 0
         while True:
 
             now_timestamp = self.ConvertDateToTimeStamp(datetime.now(), True)
-
-            if shutdown_timestamp != None and now_timestamp > shutdown_timestamp :
-                break
 
             segend_timestamp = segbegin_timestamp + period * 60
             segend_timestamp = segend_timestamp if segend_timestamp <= now_timestamp else now_timestamp
 
             pool = Pool(process_num)
-            scrape_func = partial(self.__AutoScrape_Driver__, segbegin_timestamp, segend_timestamp, pairs_last_idx)
+            scrape_func = partial(self.__ScrapeDriver__, segbegin_timestamp, segend_timestamp, pairs_last_idx, True)
             itptr = pool.imap(scrape_func, pairs_per_thread)
 
             pool.close()
             pool.join()
 
             for it in itptr:
-                for pair_data_key, pair_data_value in it[0].items():
-                    histdata_dict[pair_data_key] += pair_data_value
-                    pairs_last_idx[pair_data_key] = it[1][pair_data_key]  # last_idx
+                for pair_name, pair_data in it[0].items():
+                    self.Add_All(pair_name, pair_data, reverse=False)
+                    self.New(pair_name)
+                    self.Commit(pair_name)
 
-            for key, value in histdata_dict.items():
-                for row in value:
-                    print(row)
-                print(key)
-
-            cnt++
-            if cnt != 0:
+            if shutdown_timestamp != None and now_timestamp > shutdown_timestamp :
                 break
-    """
 
-    """
-    def ScrapeHistoryData(self, pairs='all', date_end=None, date_begin=None, local=True, write2db=False, rmrawdate=True):
+
+    def ScrapeHistoryData(self, pairs='all', date_begin=None, date_end=None, period=480, local=True, write2db=False, rmrawdate=True, process_num=4):
 
         if pairs == 'all':
-            pairs = self.SupportPairs()
+            pairs = self._supportpairs
         else:
             pairs = [pairs] if type(pairs) != type([]) else pairs
 
-        for pair in pairs:
+        pairs_last_idx = dict()
 
-            date_end, date_begin = self.ConvertDateToTimeStamp([date_end, date_begin], local)
-            self.subdata = self._platform.marketTradeHist(pair, date_begin, date_end).copy()
-            for row in self.subdata:
-                row['pair'] = pair
-            self.rawdata += self.subdata
+        for pair in pairs:
+            pairs_last_idx[pair] = 0
+
+        chunksize = len(pairs)//process_num+1 if len(pairs) % process_num != 0 else len(pairs)//process_num
+        pairs_per_thread = list(Chunks(pairs, chunksize))
+
+        begin_timestamp , end_timestamp = self.ConvertDateToTimeStamp([date_begin, date_end], local)
+        segbegin_timestamp = begin_timestamp
+        segend_timestamp = segbegin_timestamp + period * 60
+        segend_timestamp = segend_timestamp if segend_timestamp < end_timestamp else end_timestamp
+
+        cnt = 0
+
+        while True:
+
+            if segbegin_timestamp >= end_timestamp:
+                break
+
+            pool = Pool(process_num)
+            scrape_func = partial(self.__ScrapeDriver__, segbegin_timestamp, segend_timestamp, pairs_last_idx, True)
+
+            itptr = pool.imap(scrape_func, pairs_per_thread)
+
+            segbegin_timestamp, segend_timestamp = segend_timestamp, segbegin_timestamp + period * 60
+            segend_timestamp = segend_timestamp if segend_timestamp < end_timestamp else end_timestamp
 
             if write2db:
-                self.CleanRawData(write2db, rmrawdate)
-
-    def CleanRawData(self, write2db=False, delrawdata=True):
-
-        cleanrow = dict()
-        for row in self.rawdata:
-            b_or_s = row['type'][0]
-            cleanrow['buy_sell'] = 1 if b_or_s == 'b' else -1
-            for key, value in row.items():
-                if key[0] == 'd':
-                    datestr, timestr = value.split(' ')
-                    cleanrow['date'] = datetime.strptime( datestr, "%Y-%m-%d").date()
-                    cleanrow['time'] = datetime.strptime( timestr, "%H:%M:%S").time()
-                elif key[0] in 'ar':
-                    cleanrow[key] = float(value)
-                elif key == 'tradeID' or key == 'pair':
-                    cleanrow[key] = value
-            self.cleandata.append(cleanrow.copy())
-
-        if delrawdata:
-            self.rawdata = []
-
-        if write2db:
-
-            self.Add_All(self.cleandata, reverse=True)
-            self.New()
-            self.Commit()
-            self.cleandata = []
-    """
+                for it in itptr:
+                    for pair_name, pair_data in it[0].items():
+                        self.Add_All(pair_name, pair_data, reverse=False)
+                        self.New(pair_name)
+                        self.Commit(pair_name)
 
     def Add(self, pair, item):
         self.__Add__( pair, self._pairsDB[pair]._classmap(**item) )

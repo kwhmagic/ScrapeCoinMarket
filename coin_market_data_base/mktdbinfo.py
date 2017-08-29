@@ -53,10 +53,10 @@ class PairDBInfo( object ):
 
 class MktDBInfo( object ):
 
-    def __init__(self, platformname, platformobj, sqlcore, rootpath, pairs=None):
+    def __init__(self, platformname, platformobj, sqlcore, rootpath, pairs='all'):
 
         self._platformobj = platformobj
-        self._supportpairs = list(self._platformobj.returnTicker().keys()) if pairs==None else pairs
+        self._supportpairs = list(self._platformobj.returnTicker().keys()) if pairs=='all' else pairs
         self._pairsDB = dict()
 
         for pair in self._supportpairs:
