@@ -216,27 +216,18 @@ class PoloMktDB( MktDBInfo, RelativeTime ):
     def Count(self, pair):
         return self.__Count__(pair)
 
-    """
-    def QueryDate(self, pairs='all', date_begin=None, date_end=None):
+    def QueryDate(self, pair, date_begin=None, date_end=None):
 
         data = []
-        if pairs != 'all':
-            pairs = [pairs] if type(pairs) != type([]) else pairs
-        else:
-            pairs = self.SupportPairs()
 
         if date_begin != None and date_end == None:
-            for pair in pairs:
-                data += self._query.filter(self.PoloMktFormat.pair == pair, self.PoloMktFormat.date == date_begin)
+            data += self._pairsDB[pair]._query.filter_by(date = date_begin)
 
         elif date_begin != None and date_end != None:
-            for pair in pairs:
-                data += self._query.filter(self.PoloMktFormat.pair == pair,\
-                self.PoloMktFormat.date >= date_begin, self.PoloMktFormat.date < date_end)
+            data += self._pairsDB[pair]._query.filter(self._pairsDB[pair]._classmap.date>= date_begin, self._pairsDB[pair]._classmap.date < date_end)
 
-        elif date_begin == None and date_end == None:
-            for pair in pairs:
-                data += self._query.filter(self.PoloMktFormat.pair == pair)
+        else:
+            print("Err!!")
+            exit()
 
         return data
-    """

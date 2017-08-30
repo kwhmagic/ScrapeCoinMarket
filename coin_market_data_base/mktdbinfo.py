@@ -13,7 +13,7 @@ def GetClassMap(platformname, pair):
 
     class PairInfoFormat( Base ):
 
-        __tablename__ = platformname + "["+pair+"]"
+        __tablename__ = pair + "_" + platformname
         id = Column(Integer, primary_key=True)
         tradeID       = Column(Integer)
         amount        = Column(Float(1E-8))
