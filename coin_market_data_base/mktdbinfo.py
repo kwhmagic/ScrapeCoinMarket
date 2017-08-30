@@ -89,3 +89,11 @@ class MktDBInfo( object ):
     def __Count__(self, pair):
         db = self._pairsDB.get(pair)
         return db._session.query(db._classmap).count()
+
+    def __Last__(self, pair):
+        db = self._pairsDB.get(pair)
+        return db._session.query(db._classmap).order_by(db._classmap.id.desc()).first()
+
+    def __First__(self, pair):
+        db = self._pairsDB.get(pair)
+        return db._session.query(db._classmap).first()

@@ -71,7 +71,7 @@ class CoinDBManage( PoloMktDB ):
         if not convert2dataframe:
             for platformname in support_platform:
                 session = self.__LoadSession__(platformname, pair)
-                data_from_diff_platform[platformname] = session.query(GetClassMap(platformname, pair)[1]).all()
+                data_from_diff_platform[platformname] = session.query(GetClassMap(platformname, pair)[1]).all() #first()
         else:
             data_from_diff_platform[platformname] = read_sql_query("SELECT * FROM " + self._tablenames[platformname][pair], \
             self._db_engines[platformname][pair], index_col = 'tradeID')
