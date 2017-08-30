@@ -83,35 +83,37 @@ class PoloMktDB( MktDBInfo, RelativeTime ):
 
                 segrange = segend_timestamp - segbegin_timestamp
                 histdata_seg = self._platformobj.marketTradeHist(pair, segbegin_timestamp, segend_timestamp)
-                first_input_tradeId = histdata_seg[-1]['tradeID']
-                diff = self.__CheckLastTradeId__(last_tradeid, first_input_tradeId)
-                inc_row   = diff-1 if diff < 1 else 0
-                inc_clean = diff-1 if diff < 1 else len(histdata_seg)
-                last_tradeid = histdata_seg[0]['tradeID']
 
-                if clean:
-                    cleanrow = dict()
-                    for row in reversed(histdata_seg[:inc_clean]):
-                        b_or_s = row['type'][0]
-                        cleanrow['buy_sell'] = 1 if b_or_s == 'b' else -1
-                        for key, value in row.items():
-                            if key[0] == 'd':
-                                datestr, timestr = value.split(' ')
-                                cleanrow['date'] = datetime.strptime( datestr, "%Y-%m-%d").date()
-                                cleanrow['time'] = datetime.strptime( timestr, "%H:%M:%S").time()
-                            elif key[0] in 'ar':
-                                cleanrow[key] = float(value)
-                            elif key == 'tradeID':
-                                cleanrow[key] = value
-                        clean_per_thread[pair].append(cleanrow.copy())
+                if len(histdata_seg) != 0:
 
-                else:
-                    histdata_per_thread[pair] += histdata_seg[len(histdata_seg)-1+inc_row::-1]
+                    first_input_tradeId = histdata_seg[-1]['tradeID']
+                    diff = self.__CheckLastTradeId__(last_tradeid, first_input_tradeId)
+                    inc_row   = diff-1 if diff < 1 else 0
+                    inc_clean = diff-1 if diff < 1 else len(histdata_seg)
+                    last_tradeid = histdata_seg[0]['tradeID']
 
-                if len(histdata_seg) >= 50000:
+                    if clean:
+                        cleanrow = dict()
+                        for row in reversed(histdata_seg[:inc_clean]):
+                            b_or_s = row['type'][0]
+                            cleanrow['buy_sell'] = 1 if b_or_s == 'b' else -1
+                            for key, value in row.items():
+                                if key[0] == 'd':
+                                    datestr, timestr = value.split(' ')
+                                    cleanrow['date'] = datetime.strptime( datestr, "%Y-%m-%d").date()
+                                    cleanrow['time'] = datetime.strptime( timestr, "%H:%M:%S").time()
+                                elif key[0] in 'ar':
+                                    cleanrow[key] = float(value)
+                                elif key == 'tradeID':
+                                    cleanrow[key] = value
+                            clean_per_thread[pair].append(cleanrow.copy())
 
-                    latest_timestamp = self.ConvertDateToTimeStamp(histdata_seg[0]['date'], False)
-                    segend_timestamp = latest_timestamp
+                    else:
+                        histdata_per_thread[pair] += histdata_seg[len(histdata_seg)-1+inc_row::-1]
+
+                    if len(histdata_seg) >= 50000:
+                        latest_timestamp = self.ConvertDateToTimeStamp(histdata_seg[0]['date'], False)
+                        segend_timestamp = latest_timestamp
 
                 if int(segend_timestamp) >= int(end_timestamp):
                     break
